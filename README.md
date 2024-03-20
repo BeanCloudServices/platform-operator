@@ -12,6 +12,19 @@
 - kubectl version v1.11.3+.
 - Access to a Kubernetes v1.11.3+ cluster.
 
+### To Run e2e tests
+```sh
+kind create cluster --name platform-operator
+```
+or set context if cluster already exists
+```sh
+kubectl cluster-info --context kind-platform-operator
+```
+then run the e2e tests
+```sh
+make test-e2e
+```
+
 ### To Deploy on the cluster
 **Build and push your image to the location specified by `IMG`:**
 
