@@ -40,6 +40,7 @@ type CloudStatus struct {
 
 //+kubebuilder:object:root=true
 //+kubebuilder:subresource:status
+//+kubebuilder:resource:scope=Cluster
 
 // Cloud is the Schema for the clouds API
 type Cloud struct {
