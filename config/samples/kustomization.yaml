@@ -1,0 +1,4 @@
+## Append samples of your project ##
+resources:
+- bootstrap_v1alpha1_cloud.yaml
+#+kubebuilder:scaffold:manifestskustomizesamples
