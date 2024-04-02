@@ -117,7 +117,14 @@ test: manifests generate fmt vet envtest ## Run tests.
 
 # Utilize Kind or modify the e2e tests to load the image locally, enabling compatibility with other vendors.
 .PHONY: test-e2e  # Run the e2e tests against a Kind k8s instance that is spun up.
-test-e2e:
+reset-kind:
+	kind delete cluster --name "platform-operator" || true
+	kind create cluster --name "platform-operator"
+
+switch-context: reset-kind
+	kind get kubeconfig --name="platform-operator" > /tmp/kind-config
+	KUBECONFIG=/tmp/kind-config kubectl config use-context kind-platform-operator
+test-e2e: switch-context
 	go test ./test/e2e/ -v -ginkgo.v
 	
 GOLANGCI_LINT = $(shell pwd)/bin/golangci-lint

@@ -14,14 +14,6 @@
 
 ### To Run e2e tests
 ```sh
-kind create cluster --name platform-operator
-```
-or set context if cluster already exists
-```sh
-kubectl cluster-info --context kind-platform-operator
-```
-then run the e2e tests
-```sh
 make test-e2e
 ```
 
