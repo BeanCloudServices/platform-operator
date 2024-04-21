@@ -1,8 +1,13 @@
 #!/bin/bash
+# Enable debugging mode
+set -x
 
 # Default values
 DEFAULT_NAMESPACE="capi-operator-system"
 DEFAULT_PROVIDER="aws"
+
+NAMESPACE="${NAMESPACE:-$DEFAULT_NAMESPACE}"
+PROVIDER="${PROVIDER:-$DEFAULT_PROVIDER}"
 
 usage() {
     echo "Usage: $0 [OPTIONS]"
@@ -12,15 +17,9 @@ usage() {
     echo "  -h, --help               Display this help message"
 }
 
-check_kubectl() {
-    if ! command -v kubectl &> /dev/null; then
-        echo "Error: kubectl is not installed or not in PATH."
-        exit 1
-    fi
-}
-
-check_helm() {
-    if ! command -v helm &> /dev/null; then
+check_tool() {
+    local name=$1
+    if ! command -v "${name}" &> /dev/null; then
         echo "Error: Helm is not installed or not in PATH."
         exit 1
     fi
@@ -33,11 +32,57 @@ check_k8s_cluster() {
     fi
 }
 
-check_b64encoded_credentials() {
-    if [ -z "${B64ENCODED_CREDENTIALS}" ]; then
-        echo "Error: Environment variable B64ENCODED_CREDENTIALS is not exported.\nPlease get the encoded base64 credentials of your provider in https://cluster-api.sigs.k8s.io/user/quick-start#initialization-for-common-providers"
-        exit 1
+
+
+setup_aws_credential() {
+    read -p "Enter AWS_ACCESS_KEY_ID: " AWS_ACCESS_KEY_ID
+    export AWS_ACCESS_KEY_ID
+
+    read -p "Enter AWS_SECRET_ACCESS_KEY: " AWS_SECRET_ACCESS_KEY
+    export AWS_SECRET_ACCESS_KEY
+    
+    read -p "Enter REGION: " AWS_REGION
+    export AWS_REGION 
+
+    echo "AWS credentials set."
+}
+
+check_aws_credentials() {
+    if [[ -n "$AWS_ACCESS_KEY_ID" && -n "$AWS_SECRET_ACCESS_KEY" && -n "$AWS_REGION" ]]; then
+        echo "AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, and AWS_REGION are all set."
+    elif [ -n "$AWS_PROFILE" ]; then
+        current_profile="$AWS_PROFILE"
+        echo "Current AWS profile: $current_profile"
+
+        read -p "Do you want to use the current profile? (yes/no): " use_current_profile
+        if [ "$use_current_profile" == "yes" ]; then
+            AWS_ACCESS_KEY_ID=$(aws configure get aws_access_key_id --profile "$current_profile")
+            export AWS_ACCESS_KEY_ID
+
+            AWS_SECRET_ACCESS_KEY=$(aws configure get aws_secret_access_key --profile "$current_profile")
+            export AWS_SECRET_ACCESS_KEY
+
+            AWS_REGION=$(aws configure get region --profile "$current_profile")
+            export AWS_REGION
+
+            echo "AWS credentials set from profile: $current_profile"
+        else
+            setup_aws_credential
+        fi
+    else
+        echo "No AWS profile is currently set."
+        setup_aws_credential
     fi
+}
+
+check_operator_ready() {
+    if kubectl get infrastructureproviders --namespace aws-infrastructure-system | awk '$3 == "True" && $1 == "aws" ' >/dev/null 2>&1; then
+        echo "Operator deployment is ready."
+        return 0
+    else
+        echo "Waiting for Operator deployment to be ready..."
+        return 1
+    fi    
 }
 
 while [[ $# -gt 0 ]]; do
@@ -66,17 +111,35 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-check_kubectl
+check_tool "kubectl"
 
-check_b64encoded_credentials
-
-check_helm
+check_tool "helm"
 
 check_k8s_cluster
 
-NAMESPACE="${NAMESPACE:-$DEFAULT_NAMESPACE}"
-PROVIDER="${PROVIDER:-$DEFAULT_PROVIDER}"
+case "${PROVIDER}" in
+    "aws")
+        check_tool "clusterawsadm"
+        if [$? -eq 1]; then
+            echo "Installing clusterawsadm..."
+            curl -L https://github.com/kubernetes-sigs/cluster-api-provider-aws/releases/download/v0.0.0/clusterawsadm-linux-amd64 -o ./bin/clusterawsadm
+            chmod +x clusterawsadm
+            CLUSTERAWSADM=./bin/clusterawsadm
+        else
+            CLUSTERAWSADM=clusterawsadm
+        fi
 
+        check_aws_credentials
+        clusterawsadm bootstrap iam create-cloudformation-stack
+        export AWS_B64ENCODED_CREDENTIALS=$(clusterawsadm bootstrap credentials encode-as-profile)
+    ;;
+    *)
+        echo "We have not support the ${PROVIDER} provider yet"
+        exit 1
+    ;;
+esac
+
+export EXP_CLUSTER_RESOURCE_SET=true
 export CREDENTIALS_SECRET_NAME="credentials-secret"
 export CREDENTIALS_SECRET_NAMESPACE="default"
 
@@ -99,22 +162,11 @@ else
     helm repo update
 fi
 
-helm install "$CAPI_HELM_REPO_NAME" capi-operator/cluster-api-operator --create-namespace -n ${NAMESPACE} --set infrastructure=${PROVIDER} --set cert-manager.enabled=true --set configSecret.name=${CREDENTIALS_SECRET_NAME} --set configSecret.namespace=${CREDENTIALS_SECRET_NAMESPACE}  --wait
+helm install "$CAPI_HELM_REPO_NAME" capi-operator/cluster-api-operator --create-namespace -n ${NAMESPACE} --set infrastructure=${PROVIDER}:v2.1.4 --set cert-manager.enabled=true --set configSecret.name=${CREDENTIALS_SECRET_NAME} --set configSecret.namespace=${CREDENTIALS_SECRET_NAMESPACE}  --wait
 
-check_operator_ready() {
-    local operator=$(kubectl get infrastructureproviders -A -o=jsonpath='{.items[*].metadata.name}')
-    
-    if [[ $operator == *aws* ]]; then
-        echo "Operator deployment is ready."
-        return 0
-    else
-        echo "Waiting for Operator deployment to be ready..."
-        return 1
-    fi
-}
 
 # Main
 echo "Installing Operator..."
 if check_operator_ready; then
-    return 0
+    exit 0
 fi
